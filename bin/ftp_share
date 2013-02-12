@@ -1,0 +1,110 @@
+#!/usr/bin/python
+""" Really simple script for managing pureFTP shares with PG auth backend.
+
+More about PureFTP: http://www.pureftpd.org/project/pure-ftpd
+More about PostgreSQL: http://www.postgresql.org/
+
+Tested with the followings:
+CentOS 6.3
+PostgreSQL 8.4
+PureFTP 1.0.36
+"""
+import os, sys
+import string
+import psycopg2
+import psycopg2.extras
+import logging
+import re
+import grp
+from optparse import OptionParser
+from random import choice
+
+__author__    = "Karoly 'Charles' Nagy"
+__copyright__ = "Copyright 2013, Karoly Nagy"
+__licence__   = "GPL"
+__version__	  = "1.0.0"
+__contact__   = "dr.karoly.nagy@gmail.com"
+
+_FTP_CONFIG = '/etc/pureftpd/pureftpd-pgsql.conf'
+
+parser = OptionParser(usage="usage: %prog [options] path")
+parser.add_option('-l', '--list', dest='list', action='store_true', help='List all shares')
+parser.add_option('-u', '--user', dest='username', action='store', help='FTP username')
+parser.add_option('-d', '--download-limit', dest='download_limit', action='store', help='Download bandwith limit', default='500')
+parser.add_option('-r', '--remove', dest='remove', action='store', help='Remove specific user')
+
+(options, args) = parser.parse_args()
+
+def _generate_password():
+	chars = string.letters + string.digits	
+	return ''.join(choice(chars) for _ in range(8))	
+
+def _parse_config(f_path):
+	configs = {}
+	with open(f_path) as _f:
+		for _line in _f:
+			_cmatch = re.match(r'PGSQL(?P<vname>[a-zA-Z]+) *(?P<value>.*)', _line)
+			if _cmatch:
+				configs[_cmatch.group('vname')] = _cmatch.group('value')
+
+	return configs
+
+def _normalize_path(path):
+	_pwd = os.getcwd()
+	return os.path.abspath(os.path.join(_pwd,path)) 
+
+if __name__ == '__main__':
+
+	password = _generate_password()
+	_config =  _parse_config(_FTP_CONFIG)
+
+	try:
+		con = psycopg2.connect(database=_config.get('Database'), user=_config.get('User'), password=_config.get('Password'), host='127.0.0.1')
+		cur = con.cursor(cursor_factory=psycopg2.extras.DictCursor)
+		if options.list:
+			if not args or args[0] == 'all':
+				cur.execute('select "User", "Password", "Dir", "DLBandwidth", "ULBandwidth" from Users');
+			else:
+				cur.execute('select "User", "Password", "Dir", "DLBandwidth", "ULBandwidth" from Users where "Dir" LIKE %s', (_normalize_path(args[0]),));
+			for share in cur:
+				print "{user:24s}{password:16s}({dlbw:4d}kB/{ulbw:4d}kB)  {path}".format(user=share[0], password=share[1], path=share[2], dlbw=share[3], ulbw=share[4])
+		elif options.remove:
+			_retval = cur.execute('DELETE FROM Users WHERE "User" LIKE %s', (options.remove, ))
+			_commitval = cur.execute('COMMIT')
+		else:
+			if not len(args):
+				parser.print_help()
+				sys.exit(1)
+			groupinfo = grp.getgrnam('ftp')
+			_gid = groupinfo.gr_gid
+			share_path = os.path.abspath(_normalize_path(args[0])) 
+
+			cur.execute('select GREATEST(Latestuid, 10000) + 1 from ( select MAX("Uid")::int as Latestuid from users ) temp;')
+			_uid = cur.fetchone()[0]
+			cur.execute('INSERT INTO users ("User", "status", "Password", "Uid", "Gid", "Dir", "DLBandwidth") VALUES (%s, %s, %s, %s, %s, %s, %s)', (
+				options.username,
+				0,
+				password,
+				_uid,
+				_gid,
+				share_path,
+				int(options.download_limit)
+			))          
+			cur.execute('COMMIT')
+			print "Username: %s" % options.username
+			print "password: %s" % password
+			print "path: %s" % share_path
+	except psycopg2.DatabaseError as e:
+		print 'Error %s' % e    
+		exitcode = 1
+	except Exception as e:
+		print 'Unexpected error: %s' % e
+		exitcode = 255
+	else:
+		exitcode = 0
+	finally:
+		if con:
+			con.close()
+
+	sys.exit(exitcode)
+

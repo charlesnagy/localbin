@@ -3,7 +3,13 @@ localbin
 
 Useful /usr/local/bin scripts for very different purposes
 
-## ftp_share ##
+## Install ##
+
+	sudo make install
+
+## Scripts ##
+
+### ftp_share ###
 Very simple helper script for managing PureFTPd shares with PostgreSQL auth backend.
 
 	Usage: ftp_share [options] path
