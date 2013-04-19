@@ -21,7 +21,7 @@ from logging.handlers import SysLogHandler
 import logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s dba [%(process)d] %(name)-8s %(levelname)-10s %(message)s',
+    format='%(asctime)s backup_mysql [%(process)d] %(name)-8s %(levelname)-10s %(message)s',
 	datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger()
