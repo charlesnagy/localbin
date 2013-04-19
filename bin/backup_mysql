@@ -1,0 +1,99 @@
+#!/usr/bin/python
+""" Simple wrapper around Percona's XtraBackup.
+
+More about XtraBackup: http://www.percona.com/doc/percona-xtrabackup/ 
+
+Tested with the followings:
+CentOS 6.3
+Percona-server 5.5.X
+Percona-XtraBackup 2.X
+"""
+
+import os
+import sys
+import subprocess
+import gzip
+import operator
+from datetime import datetime, date, timedelta
+from optparse import OptionParser
+import time
+from logging.handlers import SysLogHandler
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s dba [%(process)d] %(name)-8s %(levelname)-10s %(message)s',
+	datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger()
+logger.addHandler(SysLogHandler(address='/dev/log'))
+
+__author__    = "Karoly 'Charles' Nagy"
+__copyright__ = "Copyright 2013, Karoly Nagy"
+__licence__   = "GPL"
+__version__	  = "1.0.0"
+__contact__   = "dr.karoly.nagy@gmail.com"
+
+_MAGNITUDE = {
+    'e': 1152921504606846976,
+    'p': 1125899906842624,
+    't': 1099511627776,
+    'g': 1073741824,
+    'm': 1048576,
+    'k': 1024,
+}
+def to_hr(value):
+    """ return human readable format
+    value has to be byte
+    """
+    _bytes = float(value)
+    for suffix, multiplier in sorted(_MAGNITUDE.iteritems(), key=operator.itemgetter(1), reverse=True):
+        if multiplier < _bytes:
+            return '{0:.2f} {suffix}B'.format(_bytes / multiplier, suffix=suffix.upper())
+
+    return _bytes
+
+def rotate(directory, retention):
+	""" Rotate files in a given directory 
+	Be careful what you put in this directory!
+	"""
+	_d = datetime.now() - timedelta(days=retention)
+	_purge_before = time.mktime(_d.timetuple())
+
+	for bkupfile in os.listdir(directory):
+		_entry = os.path.join(directory, bkupfile)
+		if os.path.getmtime(_entry) < _purge_before:
+			if os.path.isfile(_entry):
+				logging.info('Removing old file: %s' % _entry)
+				os.remove(_entry)	
+			elif os.path.isdir(_entry):
+				logging.info('Removing old directory: %s' % _entry)
+				os.removedirs(_entry)
+
+if __name__ == '__main__':
+	parser = OptionParser()
+	parser.add_option('-d', '--backupdir', help='Backup base directory', dest='backupdir')
+	parser.add_option('-r', '--retention', help='Number of days how long the backup should be kept', dest='retention', default=7)
+	options, args = parser.parse_args()
+
+	if not options.backupdir:
+		logging.error('Backupdir was not provided')
+		sys.exit(1)
+
+	_filepath = os.path.join(options.backupdir, '{date}.tar.gz'.format(date=date.today()))
+	logging.info('New backupfile will be: %s' % _filepath)
+	try:
+		tarpkg = gzip.open(_filepath, 'wb')
+		with open(os.devnull, 'wb') as _devnull:
+			logging.info('Starting innobackupex ...')
+			_xtrabkup = subprocess.Popen(['innobackupex', '--stream=tar', '--slave-info', '/tmp'], stdout=tarpkg, stderr=_devnull)
+			while _xtrabkup.poll() is None:
+				time.sleep(10)
+				logging.info('XtraBackup is running. Data on disk: %s' % to_hr(os.fstat(tarpkg.fileno()).st_size) )
+
+			logging.info('XtraBackup finished. Final size: %s' % to_hr(os.fstat(tarpkg.fileno()).st_size) )
+		tarpkg.close()
+	except Exception as e:
+	    logging.error('An unexpected error occured: %s' % e)	
+	else:
+		rotate(options.backupdir, options.retention)
+

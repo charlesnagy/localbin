@@ -22,7 +22,7 @@ from random import choice
 __author__    = "Karoly 'Charles' Nagy"
 __copyright__ = "Copyright 2013, Karoly Nagy"
 __licence__   = "GPL"
-__version__	  = "1.0.0"
+__version__	  = "1.0.2"
 __contact__   = "dr.karoly.nagy@gmail.com"
 
 _FTP_CONFIG = '/etc/pureftpd/pureftpd-pgsql.conf'
